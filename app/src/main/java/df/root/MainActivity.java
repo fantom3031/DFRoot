@@ -46,7 +46,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
     static native int nativeRunAll(IReporter reporter, int encapPort, int spi,
                                     byte[] aesCbcKey, byte[] hmacKey, int icvLen,
-                                    int senderPort, String ksudPath);
+                                    int senderPort, String ksudPath, boolean skipSoftReboot);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,7 +110,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
             int icvLen = 128 / 8;
             String ksudPath = new File(getFilesDir(), "ksud").getAbsolutePath();
-            int rc = nativeRunAll(this, encapPort, spiVal, aesKey, hmacKey, icvLen, senderPort, ksudPath);
+            int rc = nativeRunAll(this, encapPort, spiVal, aesKey, hmacKey, icvLen, senderPort, ksudPath, true);
 
             transform.close();
             spiObj.close();

@@ -49,6 +49,8 @@ argv_ksu:
     .asciz "me.weishu.kernelsu"
 argv_stage_from:
     .asciz "--stage-from"
+argv_ro_partitions:
+    .asciz "--ro-partitions"
 argv_soft_reboot:
     .asciz "--soft-reboot"
 
@@ -72,6 +74,13 @@ event_path_table:
     .asciz "/dev/input/event12"
     .asciz "/dev/input/event13"
     .asciz "/dev/input/event14"
+    .byte 0
+
+    .balign 4
+    .global libc_skip_soft_reboot_off
+libc_skip_soft_reboot_off:
+    .int libc_skip_soft_reboot_flag - libc_data
+libc_skip_soft_reboot_flag:
     .byte 0
 
     .align 4
@@ -234,7 +243,7 @@ s2_fail_mark:
     .balign 4
 s2_copy_strs_end:
 
-    sub sp, sp, 64
+    sub sp, sp, 80
 
     // Bypass DEFEX by bind mount.
     movl x0, (CLONE_NEWNS)
@@ -267,10 +276,13 @@ s2_copy_strs_end:
 
     create_mark mark_bind_ok
 
-    // Scan /dev/input/event* for KEY_VOLUMEDOWN (key code 114) via EVIOCGKEY.
-    // x26=1: volume down held → skip --soft-reboot; x26=0 → include --soft-reboot.
-    // Uses 96-byte keybits buffer pushed temporarily below the 64-byte argv area.
+    // If libc_skip_soft_reboot_flag=1 (button path), skip vol scan and omit --soft-reboot.
+    // If 0 (boot receiver path), scan /dev/input/event* for KEY_VOLUMEDOWN via EVIOCGKEY.
+    // x26=1: omit --soft-reboot; x26=0: include it.
     mov     x26, xzr
+    adr     x9, libc_skip_soft_reboot_flag
+    ldrb    w9, [x9]
+    cbnz    w9, vol_scan_skip
     adr     x27, event_path_table
     sub     sp, sp, #96
 vol_scan_loop:
@@ -305,6 +317,10 @@ vol_scan_next:
     b       vol_scan_loop
 vol_scan_done:
     add     sp, sp, #96
+    b       vol_build_argv
+vol_scan_skip:
+    mov     x26, #1
+vol_build_argv:
 
     // argv = [logcat, late-load, --package-name,
     //         me.weishu.kernelsu, --stage-from, ksud_staged_path, [--soft-reboot,] NULL]
@@ -326,12 +342,15 @@ vol_scan_done:
     adr x0, ksud_staged_path
     str x0, [sp, 40]
 
+    adr x0, argv_ro_partitions
+    str x0, [sp, 48]
+
     cbnz    x26, vol_no_softreboot
     adr     x0, argv_soft_reboot
-    str     x0, [sp, 48]
+    str     x0, [sp, 56]
     b       vol_do_fork
 vol_no_softreboot:
-    str     xzr, [sp, 48]
+    str     xzr, [sp, 56]
 vol_do_fork:
 
     // fork: child execve's ksud; parent marks success and exits
@@ -342,7 +361,7 @@ vol_do_fork:
     mov x4, xzr
     mov x8, #SYS_clone
     svc 0
-    str x0, [sp, 56]    // child: 0 (64-bit NULL terminator); parent: child pid (branches away)
+    str x0, [sp, 64]    // child: 0 (64-bit NULL terminator); parent: child pid (branches away)
     cbnz w0, s2_wait_ksud
 
     // child: execve ksud (bind-mounted over logcat)

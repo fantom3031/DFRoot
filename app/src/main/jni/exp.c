@@ -297,6 +297,7 @@ extern char libc_data[];
 extern uint32_t libc_len;
 extern char libc_first_inst_copy[];
 extern uint32_t libc_ksud_proc_path_off;
+extern uint32_t libc_skip_soft_reboot_off;
 
 int find_hook_target(const char *lib, const char *sym,
                      uint64_t *hook, uint64_t *payload, uint32_t *first_insn);
@@ -525,7 +526,8 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
                                                jint encapPort, jint spi,
                                                jbyteArray aesCbcKey,
                                                jbyteArray hmacKey, jint icvLen,
-                                               jint senderPort, jstring jksudPath) {
+                                               jint senderPort, jstring jksudPath,
+                                               jboolean skipSoftReboot) {
     struct Reporter ro = {.env = env, .obj = reporter_obj}, *reporter = &ro;
 
     g_encap_port  = (int)encapPort;
@@ -566,6 +568,7 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
                          getpid(), ksud_mfd);
                 strncpy(libc_data + libc_ksud_proc_path_off, proc_path, 63);
                 libc_data[libc_ksud_proc_path_off + 63] = '\0';
+                libc_data[libc_skip_soft_reboot_off] = skipSoftReboot ? 1 : 0;
                 REPORTLN("ksud mfd: %s", proc_path);
             }
             close(src);
