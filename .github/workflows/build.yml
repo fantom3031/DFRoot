@@ -29,8 +29,9 @@ jobs:
     - name: Make build script executable
       run: chmod +x ./build.sh || true
 
-    - name: Build project
-      run: ./build.sh
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug
+
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
