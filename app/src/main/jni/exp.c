@@ -544,8 +544,6 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
     memcpy(g_hmac_key, hb, 32);
     (*env)->ReleaseByteArrayElements(env, hmacKey, hb, JNI_ABORT);
 
-    REPORTLN("encapPort=%d spi=0x%x", g_encap_port, g_spi);
-
     // Create memfd holding ksud; patch its /proc/self/fd/<n> path into libc.
     int ksud_mfd = -1;
     {
@@ -595,43 +593,49 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
     static const struct {
         const char *path;
         const char *msg;
-        int terminal;
-        int success;
     } markers[] = {
-        { "/dev/df",    "libc++: mutex acquired, forking",           0, 0 },
-        { "/dev/dfm1",  "libc: running in modprobe",                0, 0 },
-        { "/dev/dfm0",  "libc: copying ksud from memfd",            0, 0 },
-        { "/dev/dfmf",  "libc: memfd open failed",                  0, 0 },
-        { "/dev/dfm2",  "libc: namespace unshared",                 0, 0 },
-        { "/dev/dfm3",  "libc: bind mount ok, starting ksud...",    0, 0 },
-        { "/dev/dfm6",  "success: ksud launched",                    1, 1 },
-        { "/dev/dfm4",  "failed: execve ksud failed",               1, 0 },
+        { "/dev/df",    "libc++: mutex acquired, forking" },
+        { "/dev/dfm0",  "loading permissive module"       },
+        { "/dev/dfm1",  "reading ksud from memfd"         },
+        { "/dev/dfm2",  "staging ksud files"              },
+        { "/dev/dfm3",  "switching namespace"             },
+        { "/dev/dfm4",  "bind mounting logcat"            },
+        { "/dev/dfm5",  "launching ksud"                  },
     };
     int seen[sizeof(markers)/sizeof(markers[0])] = {0};
 
     for (int elapsed = 0; elapsed < 10000; elapsed += 10) {
         usleep(10000);
-        int hit = 0;
         for (size_t j = 0; j < sizeof(markers)/sizeof(markers[0]); j++) {
             if (!seen[j] && has_marker(markers[j].path)) {
                 seen[j] = 1;
                 REPORTLN("%s", markers[j].msg);
-                if (markers[j].terminal) {
-                    rc = markers[j].success ? 0 : 1;
-                    hit = 1;
+                if (strcmp(markers[j].path, "/dev/dfm5") == 0) {
+                    // fork succeeded — poll 300ms for execve failure
+                    for (int w = 0; w < 300; w += 10) {
+                        usleep(10000);
+                        if (has_marker("/dev/dfm6")) {
+                            REPORTLN("***FAILED***: ksud exited with error");
+                            rc = 1;
+                            goto done;
+                        }
+                    }
+                    REPORTLN("***SUCCESS***");
+                    rc = 0;
+                    goto done;
                 }
             }
         }
-        if (hit) goto done;
     }
-    REPORTLN("no success signal");
+    REPORTLN("***FAILED***: check logs");
 done:
+    if (rc == 3) REPORTLN("***FAILED***: failed to patch files");
+    REPORTLN("\n=== cleanup ===");
     restore_hook(&libcxx_r, reporter);
     restore_hook(&libc_r, reporter);
     fadvise_drop(kCrashDump, reporter);
     free(libcxx_r.shell_orig);
     free(libc_r.shell_orig);
-    if (rc == 3) REPORTLN("patch failed");
     if (ksud_mfd >= 0) close(ksud_mfd);
     return rc;
 }
