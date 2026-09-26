@@ -612,7 +612,7 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
                 REPORTLN("%s", markers[j].msg);
                 if (strcmp(markers[j].path, "/dev/dfm5") == 0) {
                     // fork succeeded — poll 300ms for execve failure
-                    for (int w = 0; w < 300; w += 10) {
+                    for (int w = 0; w < 1000; w += 10) {
                         usleep(10000);
                         if (has_marker("/dev/dfm6")) {
                             REPORTLN("***FAILED***: ksud exited with error");

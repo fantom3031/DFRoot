@@ -39,6 +39,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     private final Executor mExec = Executors.newSingleThreadExecutor();
 
     public void report(String msg) {
+        Log.i(TAG, msg.trim());
         mMain.post(() -> {
             binding.outputView.append(msg);
             binding.outputScroll.post(() -> binding.outputScroll.fullScroll(View.FOCUS_DOWN));
