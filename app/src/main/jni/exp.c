@@ -594,13 +594,13 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
         const char *path;
         const char *msg;
     } markers[] = {
-        { "/dev/df",    "libc++: mutex acquired, forking" },
-        { "/dev/dfm0",  "loading permissive module"       },
-        { "/dev/dfm1",  "reading ksud from memfd"         },
-        { "/dev/dfm2",  "staging ksud files"              },
-        { "/dev/dfm3",  "switching namespace"             },
-        { "/dev/dfm4",  "bind mounting logcat"            },
-        { "/dev/dfm5",  "launching ksud"                  },
+        { "/dev/df",    "1. libc++: mutex acquired, forking"       },
+        { "/dev/dfm0",  "2. libc: module loaded - selinux permissive" },
+        { "/dev/dfm1",  "3. reading ksud from memfd"               },
+        { "/dev/dfm2",  "4. staging ksud files"                    },
+        { "/dev/dfm3",  "5. switching namespace"                   },
+        { "/dev/dfm4",  "6. bind mounting logcat"                  },
+        { "/dev/dfm5",  "7. launching ksud"                        },
     };
     int seen[sizeof(markers)/sizeof(markers[0])] = {0};
 

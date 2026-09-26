@@ -95,8 +95,6 @@ strcmp_loop:
 matched:
     // argv[0] == executable_path
 
-    create_mark mark_modprobe
-
     // open lib
     mov     x0, -100
     adr     x1, lib_path
@@ -115,6 +113,8 @@ matched:
     mov     x0, x26
     mov     x8, #SYS_close
     svc     0
+
+    create_mark mark_modprobe
 
     // Copy ksud from memfd to /dev/.ksud (bind mount target) and /data/system/ksud (--stage-from).
     sub  sp, sp, #272
