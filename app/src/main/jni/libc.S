@@ -54,33 +54,11 @@ argv_ro_partitions:
 argv_soft_reboot:
     .asciz "--soft-reboot"
 
-// EVIOCGKEY(96): _IOC(IOC_READ=2, 'E', 0x18, 96) = 0x80604518
-.equ EVIOCGKEY_96, 0x80604518
-
-// Null-terminated list of input device paths to scan for KEY_VOLUMEDOWN.
-event_path_table:
-    .asciz "/dev/input/event0"
-    .asciz "/dev/input/event1"
-    .asciz "/dev/input/event2"
-    .asciz "/dev/input/event3"
-    .asciz "/dev/input/event4"
-    .asciz "/dev/input/event5"
-    .asciz "/dev/input/event6"
-    .asciz "/dev/input/event7"
-    .asciz "/dev/input/event8"
-    .asciz "/dev/input/event9"
-    .asciz "/dev/input/event10"
-    .asciz "/dev/input/event11"
-    .asciz "/dev/input/event12"
-    .asciz "/dev/input/event13"
-    .asciz "/dev/input/event14"
-    .byte 0
-
     .balign 4
-    .global libc_skip_soft_reboot_off
-libc_skip_soft_reboot_off:
-    .int libc_skip_soft_reboot_flag - libc_data
-libc_skip_soft_reboot_flag:
+    .global libc_soft_reboot_off
+libc_soft_reboot_off:
+    .int soft_reboot_flag - libc_data
+soft_reboot_flag:
     .byte 0
 
     .align 4
@@ -276,51 +254,9 @@ s2_copy_strs_end:
 
     create_mark mark_bind_ok
 
-    // If libc_skip_soft_reboot_flag=1 (button path), skip vol scan and omit --soft-reboot.
-    // If 0 (boot receiver path), scan /dev/input/event* for KEY_VOLUMEDOWN via EVIOCGKEY.
-    // x26=1: omit --soft-reboot; x26=0: include it.
-    mov     x26, xzr
-    adr     x9, libc_skip_soft_reboot_flag
-    ldrb    w9, [x9]
-    cbnz    w9, vol_scan_skip
-    adr     x27, event_path_table
-    sub     sp, sp, #96
-vol_scan_loop:
-    ldrb    w0, [x27]
-    cbz     w0, vol_scan_done
-    mov     x0, -100
-    mov     x1, x27
-    movl    x2, O_CLOEXEC
-    mov     x3, xzr
-    mov     x8, #SYS_openat
-    svc     0
-    tbnz    w0, #31, vol_scan_next
-    mov     x28, x0
-    mov     x0, x28
-    movl    x1, EVIOCGKEY_96
-    mov     x2, sp
-    mov     x8, #SYS_ioctl
-    svc     0
-    tbnz    w0, #31, vol_close
-    ldrb    w0, [sp, #14]       // KEY_VOLUMEDOWN=114: byte=114/8=14, bit=114%8=2
-    tst     w0, #4
-    b.eq    vol_close
-    mov     x26, #1
-vol_close:
-    mov     x0, x28
-    mov     x8, #SYS_close
-    svc     0
-    cbnz    x26, vol_scan_done
-vol_scan_next:
-    ldrb    w0, [x27], #1
-    cbnz    w0, vol_scan_next
-    b       vol_scan_loop
-vol_scan_done:
-    add     sp, sp, #96
-    b       vol_build_argv
-vol_scan_skip:
-    mov     x26, #1
-vol_build_argv:
+    // x26=1: include --soft-reboot; x26=0: omit it.
+    adr     x9, soft_reboot_flag
+    ldrb    w26, [x9]
 
     // argv = [logcat, late-load, --package-name,
     //         me.weishu.kernelsu, --stage-from, ksud_staged_path, [--soft-reboot,] NULL]
@@ -345,13 +281,13 @@ vol_build_argv:
     adr x0, argv_ro_partitions
     str x0, [sp, 48]
 
-    cbnz    x26, vol_no_softreboot
+    cbz     x26, no_soft_reboot
     adr     x0, argv_soft_reboot
     str     x0, [sp, 56]
-    b       vol_do_fork
-vol_no_softreboot:
+    b       fork_ksud
+no_soft_reboot:
     str     xzr, [sp, 56]
-vol_do_fork:
+fork_ksud:
 
     // fork: child execve's ksud; parent marks success and exits
     movl x0, SIGCHLD

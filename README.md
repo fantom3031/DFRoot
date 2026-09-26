@@ -11,7 +11,7 @@ Credits:
 ## Features
 
 - Start on Boot
-- Automatic soft reboot (hold volume down to inhibit if bootlooping with Start on Boot)
+- Automatic soft reboot 
 - RO Partition Protection
 - Hide Selinux Modifications in KSU
 - Shizuku not needed — regain root without WiFi!

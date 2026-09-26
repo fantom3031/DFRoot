@@ -66,7 +66,7 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
 
             int icvLen = 128 / 8;
             int rc = MainActivity.nativeRunAll(this, encapPort, spiVal,
-                    aesKey, hmacKey, icvLen, senderPort, ksudPath, false);
+                    aesKey, hmacKey, icvLen, senderPort, ksudPath, true);
             Log.i(TAG, "boot: exploit rc=" + rc);
 
             transform.close();
