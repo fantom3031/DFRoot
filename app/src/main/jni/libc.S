@@ -12,7 +12,7 @@ libc_data:
 executable_path:
     .asciz "/vendor/bin/modprobe"
 lib_path:
-    .asciz "/vendor/lib64/libstagefrighthw.so"
+    .asciz "/vendor/lib64/libbinderdebug.so"
 mod_args:
     .asciz ""
 ksud_path:

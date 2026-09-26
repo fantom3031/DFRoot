@@ -46,7 +46,7 @@ The exploit uses this primitive to patch shellcode into `libc++.so` and `libc.so
 
 2. **splicehelper → crash_dump64** — helper binary spliced into `/apex/com.android.runtime/bin/crash_dump64` via the CBC primitive. `crash_dump64` can be called by unprivileged app with `type_transform` and gives read access to vendor library pages and splices them into a pipe so the parent can compute correct IVs. 
 
-3. **dirtyfrag.ko → libstagefrighthw.so** — The kernel module is written into `/vendor/lib64/libstagefrighthw.so` with `vendor_file` label that can be modprobe'd
+3. **dirtyfrag.ko → libbinderdebug.so** — The kernel module is written into `/vendor/lib64/libbinderdebug.so` with `vendor_file` label that can be modprobe'd
 
 4. **libc++ hook** (runs in init, uid=0, tid=1) — entrypoint via createorphanprocess. patched with shellcode that forks, sets the child's SELinux exec context to `u:r:vendor_modprobe:s0`, and execs `/vendor/bin/modprobe`.
 
