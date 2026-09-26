@@ -64,9 +64,12 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
             MainActivity.stageAsset(context, "ksud", true, context.getFilesDir());
             String ksudPath = new File(context.getFilesDir(), "ksud").getAbsolutePath();
 
+            boolean softReboot = context.getSharedPreferences("dfroot", Context.MODE_PRIVATE)
+                    .getBoolean("auto_soft_reboot", true);
+
             int icvLen = 128 / 8;
             int rc = MainActivity.nativeRunAll(this, encapPort, spiVal,
-                    aesKey, hmacKey, icvLen, senderPort, ksudPath, true);
+                    aesKey, hmacKey, icvLen, senderPort, ksudPath, softReboot);
             Log.i(TAG, "boot: exploit rc=" + rc);
 
             transform.close();

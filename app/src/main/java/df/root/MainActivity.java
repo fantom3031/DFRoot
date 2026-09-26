@@ -66,12 +66,25 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
         ComponentName bootReceiver = new ComponentName(this, BootReceiver.class);
         int state = getPackageManager().getComponentEnabledSetting(bootReceiver);
-        binding.switchBootStart.setChecked(state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED);
-        binding.switchBootStart.setOnCheckedChangeListener((btn, checked) ->
+        boolean bootEnabled = state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+        binding.switchBootStart.setChecked(bootEnabled);
+        binding.switchBootStart.setOnCheckedChangeListener((btn, checked) -> {
             getPackageManager().setComponentEnabledSetting(bootReceiver,
                 checked ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                         : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP));
+                PackageManager.DONT_KILL_APP);
+            binding.switchAutoSoftReboot.setEnabled(checked);
+        });
+
+        boolean autoSoftReboot = createDeviceProtectedStorageContext()
+                .getSharedPreferences("dfroot", MODE_PRIVATE)
+                .getBoolean("auto_soft_reboot", true);
+        binding.switchAutoSoftReboot.setChecked(autoSoftReboot);
+        binding.switchAutoSoftReboot.setEnabled(bootEnabled);
+        binding.switchAutoSoftReboot.setOnCheckedChangeListener((btn, checked) ->
+            createDeviceProtectedStorageContext()
+                .getSharedPreferences("dfroot", MODE_PRIVATE)
+                .edit().putBoolean("auto_soft_reboot", checked).apply());
     }
 
     private void runExploit() {
