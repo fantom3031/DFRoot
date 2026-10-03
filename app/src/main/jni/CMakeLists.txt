@@ -20,7 +20,7 @@ add_custom_command(
 )
 add_custom_target(splicehelper_bin DEPENDS "${SPLICEHELPER}")
 
-add_library(exp SHARED exp.c libcxx.S libc.S elf_parser.c)
+add_library(exp SHARED exp.c libcxx.S elf_parser.c)
 add_dependencies(exp splicehelper_bin)
 
 set_source_files_properties(exp.c PROPERTIES OBJECT_DEPENDS
@@ -28,7 +28,6 @@ set_source_files_properties(exp.c PROPERTIES OBJECT_DEPENDS
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android13-5.10.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android13-5.15.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android14-5.15.ko;\
-${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android14-6.1.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android15-6.6.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android16-6.12.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android17-6.18.ko;\

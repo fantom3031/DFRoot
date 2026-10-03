@@ -1,95 +1,104 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/kmod.h>
+#include <linux/kprobes.h>
 #include <linux/module.h>
-#include <linux/printk.h>
-#include <linux/string.h>
+#include <linux/ptrace.h>
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("polygraphene");
-MODULE_DESCRIPTION("DirtyFrag LKM");
-
-extern int sprint_symbol(char *buffer, unsigned long address);
+MODULE_DESCRIPTION("DFRoot LKM");
 
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
+typedef void *(*umh_setup_t)(const char *path, char **argv, char **envp, gfp_t gfp,
+                             void *init, void *cleanup, void *data);
+typedef int (*umh_exec_t)(void *info, int wait);
 
-static unsigned long sprint_symbol_addr = (unsigned long)&sprint_symbol;
+static int soft_reboot;
+module_param(soft_reboot, int, 0);
 
-static unsigned long (*kln_addr)(const char *name);
-
-#define SCAN_STRIDE	4UL
-#define SCAN_MAX	(4UL * 1024UL * 1024UL / SCAN_STRIDE) /* 1M iters, 4 MB */
-
-static int name_is(const char *buf, const char *want)
+static int defex_pre_handler(struct kprobe *p, struct pt_regs *regs)
 {
-	int i;
-
-	for (i = 0; want[i]; i++) {
-		if (buf[i] != want[i])
-			return 0;
-	}
-	/* exact function start: name must be followed by "+0x0/" */
-    return buf[i] == '+' && buf[i + 1] == '0' && buf[i + 2] == 'x' &&
-	       buf[i + 3] == '0' && buf[i + 4] == '/';
+    (void)p;
+    regs->regs[0] = 0;         /* x0 = DEFEX_ALLOW */
+    regs->pc = regs->regs[30]; /* skip body: return to caller */
+    return 1;
 }
 
-static unsigned long scan_one_dir(unsigned long start, int dir)
+static int __nocfi __init dirtyfrag_init(void)
 {
-	static char buf[256];
-	unsigned long a;
-	unsigned long i;
+    kallsyms_lookup_name_t get_addr;
+    umh_setup_t umh_setup;
+    umh_exec_t  umh_exec;
+    bool *selinux_state;
+    struct kprobe kln_kp;
+    struct kprobe defex_kp;
+    struct kprobe umh_kp;
+    void *info;
+    int ret;
 
-	for (i = 0; i < SCAN_MAX; i++) {
-		if (dir < 0) {
-			if (start < (i + 1) * SCAN_STRIDE)
-				break;
-			a = start - (i + 1) * SCAN_STRIDE;
-		} else {
-			a = start + (i + 1) * SCAN_STRIDE;
-		}
-		memset(buf, 0, sizeof(buf));
-		sprint_symbol(buf, a);
-		if (name_is(buf, "kallsyms_lookup_name"))
-			return a;
-	}
-	return 0;
+    static const char sh[]   = "/system/bin/sh";
+    static const char ksud[] = "/data/user_de/0/df.root/ksud";
+    static char cmd[256];
+    static char *envp[] = { "PATH=/system/bin", NULL };
+    static char *argv[] = { (char *)sh, "-c", cmd, NULL };
+    snprintf(cmd, sizeof(cmd),
+             "%s late-load --package-name me.weishu.kernelsu --ro-partitions%s"
+             " && touch /dev/dfm0 || touch /dev/dfm1",
+             ksud, soft_reboot ? " --soft-reboot" : "");
+
+    kln_kp = (struct kprobe){ .symbol_name = "kallsyms_lookup_name" };
+    if (register_kprobe(&kln_kp) < 0) {
+        pr_err("dfroot: kallsyms_lookup_name not found\n");
+        return -EINVAL;
+    }
+    get_addr = (kallsyms_lookup_name_t)kln_kp.addr;
+    unregister_kprobe(&kln_kp);
+
+    selinux_state = (bool *)get_addr("selinux_state");
+    if (!selinux_state) {
+        pr_err("dfroot: selinux_state not found\n");
+        return -EINVAL;
+    }
+    WRITE_ONCE(*selinux_state, false);
+    pr_info("dfroot: selinux_state permissive\n");
+
+    defex_kp = (struct kprobe){ .addr = (kprobe_opcode_t *)get_addr("task_defex_enforce"),
+                                .pre_handler = defex_pre_handler };
+    if (register_kprobe(&defex_kp) < 0)
+        pr_err("dfroot: task_defex_enforce not found\n");
+    else
+        pr_info("dfroot: task_defex_enforce hooked\n");
+
+    umh_kp = (struct kprobe){ .addr = (kprobe_opcode_t *)get_addr("task_defex_user_exec"),
+                              .pre_handler = defex_pre_handler };
+    if (register_kprobe(&umh_kp) < 0)
+        pr_err("dfroot: task_defex_user_exec not found\n");
+    else
+        pr_info("dfroot: task_defex_user_exec hooked\n");
+
+    umh_setup = (umh_setup_t)get_addr("call_usermodehelper_setup");
+    umh_exec  = (umh_exec_t)get_addr("call_usermodehelper_exec");
+    if (!umh_setup || !umh_exec) {
+        pr_err("dfroot: usermodehelper symbols missing (setup=%px exec=%px)\n",
+               umh_setup, umh_exec);
+        return -EINVAL;
+    }
+
+    info = umh_setup(sh, argv, envp, GFP_KERNEL, NULL, NULL, NULL);
+    if (!info) {
+        pr_err("dfroot: usermodehelper_setup: returned NULL\n");
+        return -EINVAL;
+    }
+    /* bypass CONFIG_STATIC_USERMODEHELPER_PATH="" overriding path to "" */
+    ((struct subprocess_info *)info)->path = sh;
+
+    ret = umh_exec(info, UMH_WAIT_PROC);
+    pr_info("dfroot: usermodehelper_exec(%s) returned %d\n", ksud, ret);
+
+    if (defex_kp.addr) unregister_kprobe(&defex_kp);
+    if (umh_kp.addr)   unregister_kprobe(&umh_kp);
+    return -E2BIG; /* return any error to unload module */
 }
 
-static int __init dirtyfrag_init(void)
-{
-	char buf[256];
-	unsigned long anchor = sprint_symbol_addr;
-	unsigned long found = 0;
-	unsigned long sstate;
-
-	/* Self-check: the anchor must resolve to sprint_symbol itself. */
-	memset(buf, 0, sizeof(buf));
-	sprint_symbol(buf, anchor);
-	if (!name_is(buf, "sprint_symbol")) {
-		pr_err("dirtyfrag: anchor self-check failed (%s), aborting\n", buf);
-		return -ENODEV;
-	}
-
-	/* Down first (mirrors original), then up for layout robustness. */
-	found = scan_one_dir(anchor, -1);
-	if (!found)
-		found = scan_one_dir(anchor, +1);
-	if (!found) {
-		pr_err("dirtyfrag: kallsyms_lookup_name not in scan window, aborting\n");
-		return -ENODEV;
-	}
-	kln_addr = (kallsyms_lookup_name_t)found;
-	sstate = kln_addr("selinux_state");
-	if (!sstate) {
-		pr_err("dirtyfrag: selinux_state unresolved, aborting\n");
-		return -ENODEV;
-	}
-	/* struct selinux_state.enforcing is the first field; one NUL byte. */
-	*(volatile unsigned char *)sstate = 0;
-
-	pr_info("dirtyfrag: Successfully set selinux permissive.\n");
-	/* Return random error to unload module. */
-	return -E2BIG;
-}
-
-/* No module_exit: we never unload; saves .exit sections. */
+/* no module_exit: we never unload; saves .exit sections */
 module_init(dirtyfrag_init);
