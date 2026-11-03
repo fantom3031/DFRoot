@@ -70,7 +70,6 @@ public class MainActivity extends Activity implements IReporter {
         List<SuManagerEntry> entries = new ArrayList<>();
         for (ApplicationInfo ai : pm.getInstalledApplications(0)) {
             if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) continue;
-            if (!ExploitRunner.hasKsud(ai)) continue;
             entries.add(new SuManagerEntry(ai.packageName, pm.getApplicationLabel(ai), pm.getApplicationIcon(ai)));
         }
         entries.sort((a, b) -> a.label.toString().compareToIgnoreCase(b.label.toString()));
