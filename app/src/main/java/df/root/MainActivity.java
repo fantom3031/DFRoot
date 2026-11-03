@@ -97,6 +97,21 @@ public class MainActivity extends Activity implements IReporter {
             public void onItemSelected(AdapterView<?> parent, View view, int pos, long id) {
                 SuManagerEntry e = entries.get(pos);
                 if (e.packageName == null) return;
+                
+                try {
+                    ApplicationInfo ai = pm.getApplicationInfo(e.packageName, 0);
+                    if (!new File(ai.nativeLibraryDir, "libksud.so").exists()) {
+                        Toast.makeText(MainActivity.this, "Invalid: 'libksud.so' not found", Toast.LENGTH_SHORT).show();
+                        spinnerSuManager.setSelection(mValidSuManagerPos);
+                        updateRunButton();
+                        return;
+                    }
+                } catch (PackageManager.NameNotFoundException ex) {
+                    Toast.makeText(MainActivity.this, "Invalid: 'libksud.so' not found", Toast.LENGTH_SHORT).show();
+                    spinnerSuManager.setSelection(mValidSuManagerPos);
+                    updateRunButton();
+                    return;
+                }
                 mValidSuManagerPos = pos;
                 prefs.edit().putString(ExploitRunner.PREF_SU_MANAGER, e.packageName).apply();
                 updateRunButton();
